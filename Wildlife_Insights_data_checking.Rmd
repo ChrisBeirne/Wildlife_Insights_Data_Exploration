@@ -1,0 +1,338 @@
+---
+title: "Wildlife Insights Data Exploration"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r adjustable options, echo=F, include=F}
+# Hello, before you click "Knit' above, please download your wildlife insights data, unzip it, and paste it into the 'raw data' folder. Thank you!
+
+# Set your timezone  
+tz <- "PET"
+
+# Use a category to colour plots 
+category <- "subproject_name"
+
+# Define a palette for the colourscheme (from the metbrewer package)
+col_pal <- "VanGogh2"
+
+```
+
+
+
+```{r non-adjustable options, echo=F, include=F}
+# Hello, before you click "Knit' above, please download your wildlife insights data, unzip it, and paste it into the 'raw data' folder. Thank you!
+
+
+# Load required packages 
+list.of.packages <- c("leaflet", "dplyr", "kriging", "corrplot", "lubridate", "kableExtra", "rredlist","sf", "usedist", "ggplot2", "ggpubr", "googledrive", "purrr", "plotly", "googlesheets4", "MetBrewer")
+
+# Check you have them and load them
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages, ,repos = "http://cran.us.r-project.org")
+
+lapply(list.of.packages, require, character.only = TRUE)
+```
+
+
+```{r data setup, echo=F, include=F}
+# Read in data frames
+dep <- read.csv("raw_data/deployments.csv", header=T)
+pro <- read.csv("raw_data/projects.csv", header=T)
+
+# Check how many image files you have (WI splits csvs if they have >500,000 rows)
+tmp <- list.files("raw_data/")
+tmp <- tmp[substr(tmp,1,3)=="ima"]
+# Load your data 
+dat<- list()
+i<- 1
+for(i in 1:length(tmp))
+{
+  dat[[i]] <- read.csv(paste0("raw_data/", tmp[i]), header=T)
+}
+dat <- bind_rows(dat)
+
+# Format the date objects
+dat$timestamp <- strptime(dat$timestamp, "%Y-%m-%d %H:%M:%S", tz="America/Lima")
+dep$start_date <- strptime(dep$start_date, "%Y-%m-%d", tz="UTC")
+dep$end_date <- strptime(dep$end_date, "%Y-%m-%d", tz="UTC")
+
+#Calculate days active
+dep$days <- dep$end_date-dep$start_date
+
+
+# Add deployment coverage
+tmp <- st_as_sf(dep,coords=c("longitude", "latitude"),crs=4326)
+
+```
+
+
+# Deployments
+To date we have deployed cameras in `r length(unique(dep$deployment_id))` camera deployments from `r length(unique(paste(dep$longitude, dep$latitude)))` unique locations (based on X-Y coordinates). 
+
+```{r, echo=F, include=F}
+# Generate colours to display the category levels - R needs them as a factor
+table(dep$subproject_name)
+dep[,category] <- factor(dep[,category])
+
+col.cat <- as.character(met.brewer(col_pal,n=length(levels(dep[,category]))))
+
+dep$Cols <- col.cat[dep[,category]]
+```
+
+```{r map, echo=F, warning=F, message=F}
+
+# Count the number of camera ststions
+n.stat <- length(unique(dep$deployment_id))
+
+m <- leaflet() %>%
+  addProviderTiles(providers$Esri.WorldTopoMap, group="Base") %>%
+  addProviderTiles(providers$Esri.WorldImagery, group="Satellite") %>%  # Add satellite data
+  
+  addCircleMarkers(lng= dep$longitude, lat= dep$latitude,
+                   color= dep$Cols,
+                   popup=paste( dep$deployment_id), radius=3) %>%
+ addLegend("topleft", colors = col.cat,  labels = levels( dep[,category]),
+    title = category,
+    labFormat = labelFormat(prefix = "$"),
+    opacity = 1
+  ) %>%
+  # Layers control
+  addLayersControl(
+    baseGroups = c("Satellite", "Base"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+m
+
+```
+
+
+# Wildlife Insights Summary
+
+```{r, echo=F}
+tmp <- as.data.frame(table(dat$identified_by=="Computer vision"))
+tmp$Type <- "Labelled"
+tmp$Type[tmp$Var1==TRUE] <- "To label"
+
+```
+
+To date, `r Sys.Date()`, we have `r nrow(dat)` images in Wildlife Insights, of which `r round((tmp$Freq[tmp$Type=="Labelled"]/sum(tmp$Freq))*100, 1)`% are identified (labelled) by people:
+
+```{r, echo=F}
+par(mfrow=c(1,1))
+
+f1 <- plot_ly(tmp,y=~tmp$Freq, x=tmp$Type,  type="bar", name=tmp$Type) %>% 
+        layout(yaxis = list(title = 'Images'), barmode = 'group')
+
+f1
+```
+
+The breakdown by labeler is as follows:
+
+```{r, echo=F}
+tmp2 <- as.data.frame(table(dat$identified_by[!dat$identified_by%in% c("Computer vision", "")]))
+
+colnames(tmp2)[1] <- "Person"
+
+f2 <- plot_ly(tmp2,y=~tmp2$Freq, x=tmp2$Person,  type="bar", name=tmp2$Person) %>% 
+        layout(yaxis = list(title = 'Images labelled'), barmode = 'group')
+
+
+f2
+
+```
+
+## Species labels
+
+```{r, echo=F}
+# Reduce to verfied data
+vdat <- dat[!dat$identified_by %in% c("Computer vision", ""),]
+# Remove blanks
+vdat$sp <- paste(vdat$genus, vdat$species)
+vdat <- vdat[vdat$is_blank==0,]
+vdat <- vdat[vdat$species!="No CV Result",]
+vdat <- vdat[vdat$common_name!="Blank",]
+
+# Do all species with a latin name have a common name - YES use common name
+#as.data.frame(table(paste(vdat$sp, vdat$common_name)))
+
+# if the species name is blank it must be to family, order or class level
+```
+
+To date we have `r nrow(vdat)` image labels verified by human observers (after removing `r nrow(dat[dat$is_blank==1 | dat$species=="No CV Result" | dat$common_name =="Blank",])` blanks). 
+
+We have `r length(unique(vdat$common_name))` unique classifications. Of these, `r length(unique(vdat[vdat$species!="",]$sp))` are to full species level, `r length(unique(vdat[vdat$species=="",]$genus))` to genus level, the rest are higher (family/order). 
+
+Note you can use the slider bar at the bottom to control the the x-axis extent. 
+
+```{r, echo=F}
+layout(matrix(c(1,1,2), 1, 3, byrow = TRUE))
+det.sum.total <- as.data.frame(count(vdat[vdat$is_blank==0,], common_name))
+det.sum.total <- det.sum.total[order(det.sum.total$n),]
+
+
+det.sum.total$order <-1:nrow(det.sum.total)
+
+yform <- list(categoryorder = "array",
+              categoryarray = det.sum.total$common_name,
+              tickfont = list(size = 7))
+
+xform <- list(rangeslider = list(type = "n"))
+
+fig <- plot_ly(x = det.sum.total$n, y = det.sum.total$common_name, type = 'bar', orientation = 'h',
+               height=2000)%>% 
+ layout(yaxis = yform, xaxis=xform)
+
+fig
+
+```
+
+# Diel time
+For any species detected more than 5 times, we will plot when they were detected:
+
+```{r, echo=F, warning=F, message=F}
+vdat$hours <- hour(vdat$timestamp) + minute(vdat$timestamp)/60 + second(vdat$timestamp)/(60*60)
+
+# Susbet to more than 100 captures
+tmp <- det.sum.total[det.sum.total$n>100,]
+
+yform <- list(categoryorder = "array",
+              categoryarray = tmp$common_name,
+              tickfont = list(size = 7))
+tmp2 <- vdat[vdat$common_name %in% yform$categoryarray,]
+
+fig <- plot_ly(x = tmp2$hours, y = tmp2$common_name,type="scatter",
+               height=1000, text=tmp2$deployment_id, hoverinfo='text',
+               mode   = 'markers',
+               marker = list(size = 5,
+                             color = 'rgba(50, 100, 255, .2)',
+                             line = list(color = 'rgba(0, 0, 0, 0)',
+                                         width = 0))) %>% 
+              layout(yaxis = yform)
+
+fig
+
+```
+
+
+# Detection check
+
+We also need to check if all of the deployments in Wildlife Insights have associated image data.
+
+Of the deployments currently in Wildlife Insights, **`r paste0(round( (length(dep$deployment_id[dep$deployment_id %in% dat$deployment_id])/nrow(dep))*100,2), "%")`** of deployments have associated image data.
+
+Check we don't have duplicates: `r length(dep$deployment_id[duplicated(dep$deployment_id)==TRUE])`
+
+```{r, echo=F, eval=F}
+#If that number is >0, what observations does it relate to?
+dep[dep$deployment_id %in% dep$deployment_id[duplicated(dep$deployment_id)==TRUE],]
+```
+
+*Note - typical workflows should mean that deployments ALWAYS have image data (they are created and uploaded at the same time). If the percentage is <100% then there is a problem*
+
+
+```{r, echo=F}
+#We can also check to see if any deployments need truncating - for example if the camera ceased to be active:
+dat$sp <- paste(dat$genus, dat$species)
+
+
+# Plot the start and end date for each deployment
+#fig <- plot_ly(x = dep$start_date[1:5], y = dep$deployment_id[1:5],type="scatter",
+#               height=2000)
+plot.order <- dep$deployment_id[order(dep$deployment_id)]
+# Remove duplicates
+plot.order<- plot.order[duplicated(plot.order)==F]
+#fig
+tmp4 <- data.frame("deployment_id"=plot.order, "Plot.grp"=ceiling(1:length(plot.order)/20))
+
+eff <- left_join(tmp4,dep,by="deployment_id")
+eff <- eff[duplicated(eff)==FALSE,]
+
+
+i<- 15
+j <- 1
+for(j in 1:length(unique(eff$Plot.grp)))
+{
+    layout(matrix(c(1,1,1,2), 1, 4, byrow = TRUE))
+    par(mar=c(2,12,1,1))
+    #str(eff)
+    plot(c(min(eff$start_date, na.rm=T), max(eff$end_date, na.rm=T)),      c(1,length(unique(eff$deployment_id[eff$Plot.grp==j]))), las=1, ylab="", xlab="", type="n", yaxt="n")
+    
+    axis(2, at= length(unique(eff$deployment_id[eff$Plot.grp==j])):1, labels= unique(eff$deployment_id[eff$Plot.grp==j]), las=1, cex.axis=1)
+    #mtext("Camera Deployment ID", 2, 4)
+    # Make lines for each of the cameras
+    for(i in length(eff$deployment_id[eff$Plot.grp==j]):1)
+    {
+      abline(h=i, col=rgb(0,0,0,0.1))
+      tmp <- eff[eff$deployment_id==rev(eff$deployment_id[eff$Plot.grp==j])[i],]
+      
+      tmp2 <- dat[dat$deployment_id==tmp$deployment_id[1],]
+      #tmp2 <- left_join(tmp2, tmp3, by = "sp")
+      points(tmp2$timestamp, rep(i,nrow(tmp2)), pch="|", col= tmp2$is_blank+2)
+    
+      for(k in 1:nrow(tmp))
+        {
+          lines(c(tmp$start_date[k],
+                           tmp$end_date[k]),
+                c(i,i), lwd=2)
+        }
+      }
+    par(mar=c(0,0,1,0))
+    plot.new()
+    legend("topleft", legend=c("Animal", "Blank"), fill=c(2,3), xpd=TRUE, cex=1.1 )
+
+}
+
+
+```
+
+
+
+
+# Full species list
+
+A full list of labelled species in alphabetic order:
+
+```{r, echo=F}
+#head(vdat)
+tmp <- vdat[, c("class","order","family", "genus","species")]
+
+tmp <- tmp[duplicated(tmp)==F,]
+tmp <- tmp[ with(tmp, order(class,order,family, genus,species)),]
+row.names(tmp) <- NULL
+
+tmp %>%
+  kbl() %>%
+  kable_styling(full_width = T) %>%
+  #column_spec(1, bold = T, border_right = T )%>%
+  scroll_box( height = "800px")
+
+
+
+
+```
+
+# Meta data
+
+Summary information for the project:
+
+```{r, echo=F}
+t(pro) %>%
+  kbl() %>%
+  kable_styling(full_width = T) %>%
+  column_spec(1, bold = T, border_right = T)
+
+
+```
+
+
+```{r, echo=F}
+# Write updated files
+dir.create("data_processed")
+write.csv(eff,"data_processed/Effort.csv")
+```
+
+

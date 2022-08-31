@@ -37,3 +37,9 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+
+# Remove datafiles
+raw_data/cameras.csv
+raw_data/deployments.csv
+raw_data/images.csv
+raw_data/projects.csv
