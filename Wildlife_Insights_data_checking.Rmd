@@ -71,7 +71,7 @@ tmp <- st_as_sf(dep,coords=c("longitude", "latitude"),crs=4326)
 
 
 # Deployments
-To date we have deployed cameras in `r length(unique(dep$deployment_id))` camera deployments from `r length(unique(paste(dep$longitude, dep$latitude)))` unique locations (based on X-Y coordinates). 
+To date we have `r length(unique(dep$deployment_id))` camera deployments from `r length(unique(paste(dep$longitude, dep$latitude)))` unique locations (based on X-Y coordinates). 
 
 ```{r, echo=F, include=F}
 # Generate colours to display the category levels - R needs them as a factor
@@ -233,6 +233,19 @@ dep[dep$deployment_id %in% dep$deployment_id[duplicated(dep$deployment_id)==TRUE
 
 *Note - typical workflows should mean that deployments ALWAYS have image data (they are created and uploaded at the same time). If the percentage is <100% then there is a problem*
 
+## Check for date-time camera malfunctions
+
+Sometime cameras get time and date manfunctions. One symptom of this would be images before the first deployment date. Do we have that in this instance? 
+
+We have `r nrow(dat[dat$timestamp < min(dep$start_date),])` images from  `r length(unique(dat$deployment_id[dat$timestamp < min(dep$start_date)]))` deployments which were taken before the start date. The deployments and the year the images are from are:
+
+```{r, echo=F}
+unique(paste(dat$deployment_id[dat$timestamp < min(dep$start_date)], substr(dat$timestamp[dat$timestamp < min(dep$start_date)],1,4)))
+```
+
+## Detection plots
+
+The following series of plots allows you to check if your cameras are collecting photos when you thought they were. The black bars denote camera activity, the vertical lines denote detections: 
 
 ```{r, echo=F}
 #We can also check to see if any deployments need truncating - for example if the camera ceased to be active:
@@ -288,7 +301,6 @@ for(j in 1:length(unique(eff$Plot.grp)))
 
 
 ```
-
 
 
 
